@@ -1,0 +1,437 @@
+--[[
+    MM2 Universal Hub - Full Edition
+    Combined Studio & Client Script
+    Location: StarterPlayer > StarterPlayerScripts
+]]
+
+--// Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local CollectionService = game:GetService("CollectionService")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+--// Configuration
+local CONFIG = {
+    ToggleKey = Enum.KeyCode.RightShift,
+    CollectibleTag = "Collectible",
+    DroppedGunName = "GunDrop",
+    DefaultWalkSpeed = 16,
+    DefaultJumpPower = 50,
+    MaxWalkSpeed = 100,
+    MaxJumpPower = 150,
+    TeleportOffset = Vector3.new(0, 3, 0),
+    AutoCollectInterval = 0.35,
+}
+
+--// State
+local State = {
+    WalkSpeed = CONFIG.DefaultWalkSpeed,
+    JumpPower = CONFIG.DefaultJumpPower,
+    SpeedEnabled = false,
+    JumpEnabled = false,
+    InfiniteJump = false,
+    HighlightCollectibles = false,
+    AutoCollect = false,
+    RoleESP = false,
+    GunAlert = false,
+    UIVisible = true,
+    CurrentTab = "Home",
+    SearchText = "",
+    Destroyed = false,
+}
+
+local Connections = {}
+local Highlights = {}
+local RoleHighlights = {}
+local Controls = {}
+local TabButtons = {}
+local PageFrames = {}
+local FeatureRegistry = {}
+
+local function track(connection)
+    table.insert(Connections, connection)
+    return connection
+end
+
+local function disconnectAll()
+    for _, connection in ipairs(Connections) do
+        pcall(function() connection:Disconnect() end)
+    end
+    table.clear(Connections)
+end
+
+local function tween(instance, duration, properties)
+    local info = TweenInfo.new(duration or 0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+    local anim = TweenService:Create(instance, info, properties)
+    anim:Play()
+    return anim
+end
+
+local function create(className, properties, parent)
+    local object = Instance.new(className)
+    for key, value in pairs(properties or {}) do
+        object[key] = value
+    end
+    object.Parent = parent
+    return object
+end
+
+local function round(parent, radius)
+    return create("UICorner", { CornerRadius = UDim.new(0, radius or 10) }, parent)
+end
+
+local function outline(parent, color, transparency)
+    return create("UIStroke", { Color = color or Color3.fromRGB(57, 62, 78), Transparency = transparency or 0, Thickness = 1 }, parent)
+end
+
+local function getCharacter() return LocalPlayer.Character end
+local function getHumanoid()
+    local char = getCharacter()
+    return char and char:FindFirstChildOfClass("Humanoid")
+end
+local function getRoot(char)
+    char = char or getCharacter()
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+--// Theme
+local Theme = {
+    Background = Color3.fromRGB(15, 17, 24),
+    Panel = Color3.fromRGB(21, 24, 33),
+    Card = Color3.fromRGB(28, 32, 43),
+    Hover = Color3.fromRGB(39, 44, 58),
+    Accent = Color3.fromRGB(130, 100, 255),
+    Text = Color3.fromRGB(240, 242, 250),
+    Muted = Color3.fromRGB(147, 153, 172),
+    Green = Color3.fromRGB(82, 220, 154),
+    Red = Color3.fromRGB(255, 102, 115),
+    Sheriff = Color3.fromRGB(80, 140, 235),
+    Murderer = Color3.fromRGB(235, 80, 80),
+}
+
+--// GUI Setup
+local oldGui = PlayerGui:FindFirstChild("MM2HubFull")
+if oldGui then oldGui:Destroy() end
+
+local UI = {}
+UI.Screen = create("ScreenGui", { Name = "MM2HubFull", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, PlayerGui)
+
+UI.Main = create("Frame", {
+    Name = "Main",
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.fromScale(0.5, 0.5),
+    Size = UDim2.fromOffset(740, 490),
+    BackgroundColor3 = Theme.Background,
+    BorderSizePixel = 0,
+}, UI.Screen)
+round(UI.Main, 15)
+outline(UI.Main, Color3.fromRGB(55, 60, 78), 0.2)
+
+local mainScale = create("UIScale", { Scale = 1 }, UI.Main)
+
+UI.Topbar = create("Frame", { Size = UDim2.new(1, 0, 0, 54), BackgroundColor3 = Theme.Panel, BorderSizePixel = 0 }, UI.Main)
+round(UI.Topbar, 15)
+create("Frame", { Position = UDim2.new(0, 0, 1, -15), Size = UDim2.new(1, 0, 0, 15), BackgroundColor3 = Theme.Panel, BorderSizePixel = 0 }, UI.Topbar)
+
+UI.Brand = create("TextLabel", { Position = UDim2.fromOffset(18, 0), Size = UDim2.new(0, 210, 1, 0), BackgroundTransparency = 1, Text = "MM2HUB  /  PRO", TextColor3 = Theme.Text, TextSize = 15, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left }, UI.Topbar)
+
+UI.Close = create("TextButton", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(30, 30), BackgroundColor3 = Theme.Card, Text = "×", TextColor3 = Theme.Text, TextSize = 21, Font = Enum.Font.Gotham, AutoButtonColor = false }, UI.Topbar)
+round(UI.Close, 8)
+
+UI.Sidebar = create("Frame", { Position = UDim2.fromOffset(12, 66), Size = UDim2.new(0, 155, 1, -78), BackgroundColor3 = Theme.Panel, BorderSizePixel = 0 }, UI.Main)
+round(UI.Sidebar, 12)
+
+UI.Search = create("TextBox", { Position = UDim2.fromOffset(9, 10), Size = UDim2.new(1, -18, 0, 34), BackgroundColor3 = Theme.Card, PlaceholderText = "Search features...", PlaceholderColor3 = Theme.Muted, Text = "", TextColor3 = Theme.Text, TextSize = 11, Font = Enum.Font.Gotham, ClearTextOnFocus = false }, UI.Sidebar)
+round(UI.Search, 8)
+
+UI.Nav = create("Frame", { Position = UDim2.fromOffset(8, 54), Size = UDim2.new(1, -16, 1, -62), BackgroundTransparency = 1 }, UI.Sidebar)
+create("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, UI.Nav)
+
+UI.Content = create("Frame", { Position = UDim2.fromOffset(179, 66), Size = UDim2.new(1, -191, 1, -78), BackgroundTransparency = 1 }, UI.Main)
+
+UI.Toast = create("TextLabel", {
+    AnchorPoint = Vector2.new(0.5, 1),
+    Position = UDim2.new(0.5, 0, 1, -12),
+    Size = UDim2.fromOffset(280, 34),
+    BackgroundColor3 = Theme.Card,
+    BackgroundTransparency = 1,
+    Text = "",
+    TextColor3 = Theme.Text,
+    TextSize = 12,
+    Font = Enum.Font.GothamMedium,
+    Visible = false,
+    ZIndex = 20,
+}, UI.Screen)
+round(UI.Toast, 9)
+
+local function notify(message, color)
+    UI.Toast.Text = tostring(message)
+    UI.Toast.TextColor3 = color or Theme.Text
+    UI.Toast.Visible = true
+    tween(UI.Toast, 0.2, { BackgroundTransparency = 0.08 })
+    task.delay(2.5, function()
+        if UI.Toast then
+            tween(UI.Toast, 0.25, { BackgroundTransparency = 1 })
+            task.delay(0.3, function() UI.Toast.Visible = false end)
+        end
+    end)
+end
+
+UI.MobileButton = create("TextButton", {
+    Name = "MobileToggle",
+    AnchorPoint = Vector2.new(1, 1),
+    Position = UDim2.new(1, -18, 1, -90),
+    Size = UDim2.fromOffset(58, 58),
+    BackgroundColor3 = Theme.Accent,
+    Text = "MM",
+    TextColor3 = Color3.new(1, 1, 1),
+    TextSize = 16,
+    Font = Enum.Font.GothamBold,
+    AutoButtonColor = false,
+    Visible = UserInputService.TouchEnabled,
+    ZIndex = 30,
+}, UI.Screen)
+round(UI.MobileButton, 18)
+
+--// UI Builders
+local function addPage(name, subtitle)
+    local page = create("ScrollingFrame", { Name = name, Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = Theme.Accent, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, Visible = false }, UI.Content)
+    create("UIListLayout", { Padding = UDim.new(0, 9), SortOrder = Enum.SortOrder.LayoutOrder }, page)
+    create("TextLabel", { Size = UDim2.new(1, -6, 0, 30), BackgroundTransparency = 1, Text = name, TextColor3 = Theme.Text, TextSize = 21, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Left }, page)
+    create("TextLabel", { Size = UDim2.new(1, -6, 0, 24), BackgroundTransparency = 1, Text = subtitle or "", TextColor3 = Theme.Muted, TextSize = 11, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true }, page)
+    PageFrames[name] = page
+    return page
+end
+
+local function addFeature(pageName, title, description, callback)
+    local page = PageFrames[pageName]
+    if not page then return end
+    local card = create("Frame", { Size = UDim2.new(1, -6, 0, 65), BackgroundColor3 = Theme.Card, BorderSizePixel = 0 }, page)
+    round(card, 10)
+    create("TextLabel", { Position = UDim2.fromOffset(12, 8), Size = UDim2.new(1, -125, 0, 22), BackgroundTransparency = 1, Text = title, TextColor3 = Theme.Text, TextSize = 12, Font = Enum.Font.GothamSemibold, TextXAlignment = Enum.TextXAlignment.Left }, card)
+    create("TextLabel", { Position = UDim2.fromOffset(12, 31), Size = UDim2.new(1, -125, 0, 22), BackgroundTransparency = 1, Text = description or "", TextColor3 = Theme.Muted, TextSize = 10, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true }, card)
+    local action = create("TextButton", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.fromOffset(94, 32), BackgroundColor3 = Theme.Hover, Text = "RUN", TextColor3 = Theme.Text, TextSize = 10, Font = Enum.Font.GothamBold, AutoButtonColor = false }, card)
+    round(action, 8)
+
+    track(action.Activated:Connect(function()
+        if callback then pcall(callback) end
+    end))
+
+    table.insert(FeatureRegistry, { Title = title, Description = description or "", Card = card })
+end
+
+local function addToggle(pageName, title, description, initial, onChanged)
+    local card = create("Frame", { Size = UDim2.new(1, -6, 0, 65), BackgroundColor3 = Theme.Card, BorderSizePixel = 0 }, PageFrames[pageName])
+    round(card, 10)
+    create("TextLabel", { Position = UDim2.fromOffset(12, 8), Size = UDim2.new(1, -125, 0, 22), BackgroundTransparency = 1, Text = title, TextColor3 = Theme.Text, TextSize = 12, Font = Enum.Font.GothamSemibold, TextXAlignment = Enum.TextXAlignment.Left }, card)
+    create("TextLabel", { Position = UDim2.fromOffset(12, 31), Size = UDim2.new(1, -125, 0, 22), BackgroundTransparency = 1, Text = description or "", TextColor3 = Theme.Muted, TextSize = 10, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true }, card)
+    
+    local action = create("TextButton", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0), Size = UDim2.fromOffset(94, 32), BackgroundColor3 = initial and Theme.Accent or Theme.Hover, Text = initial and "ON" or "OFF", TextColor3 = Theme.Text, TextSize = 10, Font = Enum.Font.GothamBold, AutoButtonColor = false }, card)
+    round(action, 8)
+
+    local val = initial or false
+    track(action.Activated:Connect(function()
+        val = not val
+        action.Text = val and "ON" or "OFF"
+        action.BackgroundColor3 = val and Theme.Accent or Theme.Hover
+        if onChanged then onChanged(val) end
+    end))
+
+    Controls[title] = { Set = function(v) val = v action.Text = v and "ON" or "OFF" action.BackgroundColor3 = v and Theme.Accent or Theme.Hover end }
+    table.insert(FeatureRegistry, { Title = title, Description = description or "", Card = card })
+end
+
+local function addSlider(pageName, title, description, minV, maxV, initial, onChanged)
+    local card = create("Frame", { Size = UDim2.new(1, -6, 0, 86), BackgroundColor3 = Theme.Card, BorderSizePixel = 0 }, PageFrames[pageName])
+    round(card, 10)
+    create("TextLabel", { Position = UDim2.fromOffset(12, 8), Size = UDim2.new(1, -100, 0, 20), BackgroundTransparency = 1, Text = title, TextColor3 = Theme.Text, TextSize = 12, Font = Enum.Font.GothamSemibold, TextXAlignment = Enum.TextXAlignment.Left }, card)
+    create("TextLabel", { Position = UDim2.fromOffset(12, 29), Size = UDim2.new(1, -24, 0, 18), BackgroundTransparency = 1, Text = description or "", TextColor3 = Theme.Muted, TextSize = 10, Font = Enum.Font.Gotham, TextXAlignment = Enum.TextXAlignment.Left }, card)
+    
+    local valLabel = create("TextLabel", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 8), Size = UDim2.fromOffset(64, 20), BackgroundTransparency = 1, Text = tostring(initial), TextColor3 = Theme.Accent, TextSize = 12, Font = Enum.Font.GothamBold, TextXAlignment = Enum.TextXAlignment.Right }, card)
+    local bar = create("Frame", { Position = UDim2.new(0, 12, 1, -20), Size = UDim2.new(1, -24, 0, 6), BackgroundColor3 = Theme.Hover, BorderSizePixel = 0 }, card)
+    round(bar, 4)
+
+    local ratio = (initial - minV) / (maxV - minV)
+    local fill = create("Frame", { Size = UDim2.new(ratio, 0, 1, 0), BackgroundColor3 = Theme.Accent, BorderSizePixel = 0 }, bar)
+    round(fill, 4)
+
+    local function updateVal(v)
+        v = math.clamp(v, minV, maxV)
+        valLabel.Text = tostring(v)
+        fill.Size = UDim2.new((v - minV) / (maxV - minV), 0, 1, 0)
+        if onChanged then onChanged(v) end
+    end
+
+    local dragging = false
+    track(bar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = true end
+    end))
+    track(UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local pct = math.clamp((input.Position.X - bar.AbsolutePosition.X) / math.max(bar.AbsoluteSize.X, 1), 0, 1)
+            updateVal(math.floor(minV + pct * (maxV - minV) + 0.5))
+        end
+    end))
+    track(UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+    end))
+
+    table.insert(FeatureRegistry, { Title = title, Description = description or "", Card = card })
+end
+
+--// Initialize Pages
+addPage("Home", "Quick actions and game overview.")
+addPage("Innocent", "Gun tracking and survival helpers.")
+addPage("Movement", "Speed, Jump, and mobility tools.")
+addPage("Visuals", "ESP highlights and visual modifications.")
+addPage("Settings", "Configuration and preferences.")
+
+local function showTab(name)
+    for pName, page in pairs(PageFrames) do page.Visible = (pName == name) end
+    for tName, btn in pairs(TabButtons) do
+        btn.BackgroundColor3 = (tName == name) and Theme.Accent or Theme.Panel
+        btn.TextColor3 = (tName == name) and Color3.new(1, 1, 1) or Theme.Muted
+    end
+end
+
+local function addTab(name, order)
+    local btn = create("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = Theme.Panel, Text = "  " .. name, TextColor3 = Theme.Muted, TextSize = 11, Font = Enum.Font.GothamSemibold, TextXAlignment = Enum.TextXAlignment.Left, AutoButtonColor = false, LayoutOrder = order }, UI.Nav)
+    round(btn, 8)
+    TabButtons[name] = btn
+    track(btn.Activated:Connect(function() showTab(name) end))
+end
+
+addTab("Home", 1)
+addTab("Innocent", 2)
+addTab("Movement", 3)
+addTab("Visuals", 4)
+addTab("Settings", 5)
+
+--// Logic & Features Implementation
+local function getCollectibles()
+    local res = {}
+    for _, inst in ipairs(CollectionService:GetTagged(CONFIG.CollectibleTag)) do
+        if inst and inst:IsDescendantOf(Workspace) then
+            local p = inst:IsA("BasePart") and inst or inst:FindFirstChildWhichIsA("BasePart", true)
+            if p then table.insert(res, { Instance = inst, Part = p }) end
+        end
+    end
+    return res
+end
+
+local function teleportToGun()
+    local root = getRoot()
+    local gun = Workspace:FindFirstChild(CONFIG.DroppedGunName, true)
+    if root and gun then
+        local p = gun:IsA("BasePart") and gun or gun:FindFirstChildWhichIsA("BasePart", true)
+        if p then root.CFrame = p.CFrame + CONFIG.TeleportOffset notify("Teleported to dropped gun!", Theme.Sheriff) return end
+    end
+    notify("Gun not found on map", Theme.Red)
+end
+
+-- Home Actions
+addFeature("Home", "Teleport to Nearest Item", "Teleports to the closest collectible/coin.", function()
+    local root = getRoot()
+    local items = getCollectibles()
+    if root and #items > 0 then
+        root.CFrame = items[1].Part.CFrame + CONFIG.TeleportOffset
+        notify("Teleported to item")
+    else
+        notify("No items found")
+    end
+end)
+
+-- Innocent Tab
+addFeature("Innocent", "Grab Dropped Gun", "Teleports directly to the dropped sheriff gun.", teleportToGun)
+addToggle("Innocent", "Gun Drop Alert", "Notifies when the sheriff drops the gun.", false, function(on)
+    State.GunAlert = on
+    if on then
+        track(Workspace.DescendantAdded:Connect(function(inst)
+            if inst.Name == CONFIG.DroppedGunName and State.GunAlert then
+                notify("⚠️ Gun Dropped on Map!", Theme.Sheriff)
+            end
+        end))
+        notify("Gun Alert enabled", Theme.Green)
+    end
+end)
+
+-- Movement Tab
+addSlider("Movement", "WalkSpeed", "Adjust character movement speed.", 16, CONFIG.MaxWalkSpeed, CONFIG.DefaultWalkSpeed, function(v)
+    State.WalkSpeed = v
+    local hum = getHumanoid()
+    if hum and State.SpeedEnabled then hum.WalkSpeed = v end
+end)
+addToggle("Movement", "Enable WalkSpeed", "Applies custom speed.", false, function(on)
+    State.SpeedEnabled = on
+    local hum = getHumanoid()
+    if hum then hum.WalkSpeed = on and State.WalkSpeed or CONFIG.DefaultWalkSpeed end
+end)
+addToggle("Movement", "Infinite Jump", "Allows jumping mid-air.", false, function(on) State.InfiniteJump = on end)
+
+-- Visuals Tab
+addToggle("Visuals", "Role ESP Highlights", "Highlights players based on their roles.", false, function(on)
+    State.RoleESP = on
+    if on then
+        track(RunService.Heartbeat:Connect(function()
+            if not State.RoleESP then return end
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LocalPlayer and plr.Character then
+                    local h = RoleHighlights[plr]
+                    if not h then
+                        h = Instance.new("Highlight")
+                        h.FillTransparency = 0.5
+                        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                        h.Parent = plr.Character
+                        RoleHighlights[plr] = h
+                    end
+                    h.FillColor = Theme.Green -- Default Innocent color placeholder
+                end
+            end
+        end))
+    else
+        for _, h in pairs(RoleHighlights) do if h then h:Destroy() end end
+        table.clear(RoleHighlights)
+    end
+end)
+
+-- Settings Tab
+addFeature("Settings", "Close Interface", "Hides the Hub window.", function()
+    UI.Main.Visible = false
+end)
+
+-- Search implementation
+UI.Search:GetPropertyChangedSignal("Text"):Connect(function()
+    local q = string.lower(UI.Search.Text)
+    for _, item in ipairs(FeatureRegistry) do
+        item.Card.Visible = q == "" or string.find(string.lower(item.Title .. item.Description), q, 1, true) ~= nil
+    end
+end)
+
+-- Infinite Jump Hook
+track(UserInputService.JumpRequest:Connect(function()
+    if State.InfiniteJump then
+        local hum = getHumanoid()
+        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end
+end))
+
+-- UI Toggles
+local function toggleUI()
+    State.UIVisible = not State.UIVisible
+    UI.Main.Visible = State.UIVisible
+end
+
+track(UI.Close.Activated:Connect(toggleUI))
+track(UI.MobileButton.Activated:Connect(toggleUI))
+track(UserInputService.InputBegan:Connect(function(input, processed)
+    if not processed and input.KeyCode == CONFIG.ToggleKey then toggleUI() end
+end))
+
+-- Initialize
+showTab("Home")
+notify("MM2 Hub Loaded Successfully!", Theme.Green)
